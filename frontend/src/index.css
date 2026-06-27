@@ -1,0 +1,60 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Roboto+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --color-google-blue: #1a73e8;
+  --color-google-blueHover: #1557b0;
+  --color-google-darkBg: #121212;
+  --color-google-cardDark: #1e1e1e;
+  --color-google-sidebarDark: #202124;
+  --color-google-borderDark: #2d2d2d;
+  --color-google-textMuted: #9aa0a6;
+}
+
+@layer base {
+  body {
+    font-family: 'Outfit', sans-serif;
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    @apply bg-gray-50 text-gray-900 transition-colors duration-200;
+  }
+
+  body.dark {
+    @apply bg-google-darkBg text-gray-100;
+  }
+}
+
+/* Google Cloud style logs terminal scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-gray-300 rounded;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  @apply bg-google-borderDark rounded;
+}
+
+/* Subtle pulse animation for connection lights */
+@keyframes status-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.2);
+    opacity: 0.8;
+  }
+}
+
+.status-indicator {
+  animation: status-pulse 2s infinite ease-in-out;
+}
