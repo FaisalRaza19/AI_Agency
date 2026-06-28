@@ -5,6 +5,8 @@ from app.core.auth import verify_token
 
 router = APIRouter(prefix="/telemetry", tags=["Telemetry WebSockets"])
 
+import redis.asyncio as aioredis
+
 class ConnectionManager:
     """Manages active WebSockets connections to broadcast telemetry states."""
     def __init__(self):
@@ -24,7 +26,17 @@ class ConnectionManager:
         await websocket.send_json(message)
 
     async def broadcast(self, message: Dict[str, Any]) -> None:
-        """Broadcasts a JSON payload to all active clients concurrently."""
+        """Broadcasts a JSON payload to all active clients globally via Redis Pub/Sub channel."""
+        from app.config import settings
+        try:
+            redis_client = aioredis.from_url(settings.REDIS_URL)
+            await redis_client.publish("uabe_telemetry_broadcast", json.dumps(message))
+        except Exception as e:
+            print(f"Error publishing telemetry to Redis Pub/Sub: {e}. Falling back to local broadcast.")
+            await self.local_broadcast(message)
+
+    async def local_broadcast(self, message: Dict[str, Any]) -> None:
+        """Broadcasts JSON payload locally to clients connected to this worker node instance."""
         inactive_sockets = []
         for connection in self.active_connections:
             try:
@@ -38,6 +50,35 @@ class ConnectionManager:
             self.disconnect(dead_socket)
 
 manager = ConnectionManager()
+
+async def redis_pubsub_listener():
+    """
+    Subscribes to the shared Redis Pub/Sub telemetry channel and broadcasts
+    received events to all locally connected WebSocket clients.
+    """
+    from app.config import settings
+    import asyncio
+    print("[TELEMETRY] Starting Redis Pub/Sub telemetry listener task...")
+    
+    while True:
+        try:
+            redis_client = aioredis.from_url(settings.REDIS_URL)
+            pubsub = redis_client.pubsub()
+            await pubsub.subscribe("uabe_telemetry_broadcast")
+            
+            async for message in pubsub.listen():
+                if message and message["type"] == "message":
+                    try:
+                        data = json.loads(message["data"])
+                        await manager.local_broadcast(data)
+                    except Exception as ex:
+                        print(f"[TELEMETRY] Error parsing pubsub message: {ex}")
+        except asyncio.CancelledError:
+            print("[TELEMETRY] Redis Pub/Sub listener task cancelled.")
+            break
+        except Exception as e:
+            print(f"[TELEMETRY] Redis connection lost ({e}). Retrying in 5s...")
+            await asyncio.sleep(5)
 
 @router.websocket("/ws")
 async def telemetry_websocket_endpoint(

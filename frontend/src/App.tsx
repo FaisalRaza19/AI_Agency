@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Dashboard } from './components/Dashboard';
+import { CampaignsConsole } from './components/CampaignsConsole';
+import { RavaTelemetry } from './components/RavaTelemetry';
+import { WalletGuardrails } from './components/WalletGuardrails';
+import { MasterSettings } from './components/MasterSettings';
 import type { WalletState, LeadState } from './components/Dashboard';
 import type { LogEntry } from './components/LogStreamer';
 import { api } from './services/api';
@@ -232,7 +236,23 @@ function App() {
             />
           )}
 
-          {currentView !== 'dashboard' && (
+          {currentView === 'campaigns' && (
+            <CampaignsConsole isDark={isDark} />
+          )}
+  
+          {currentView === 'rava' && (
+            <RavaTelemetry isDark={isDark} />
+          )}
+
+          {currentView === 'wallet' && (
+            <WalletGuardrails isDark={isDark} />
+          )}
+
+          {currentView === 'settings' && (
+            <MasterSettings isDark={isDark} />
+          )}
+  
+          {currentView !== 'dashboard' && currentView !== 'campaigns' && currentView !== 'rava' && currentView !== 'wallet' && currentView !== 'settings' && (
             <div className="flex flex-col items-center justify-center h-full text-center space-y-4">
               <ShieldAlert size={48} className="text-google-blue" />
               <div>

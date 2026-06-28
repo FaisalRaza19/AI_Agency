@@ -10,15 +10,32 @@ from app.api.endpoints.telemetry import router as telemetry_router
 from app.api.endpoints.resend_webhook import router as email_webhook_router
 from app.api.endpoints.billing import router as billing_router
 from app.api.endpoints.sandbox import router as sandbox_router
+from app.api.endpoints.campaigns import router as campaigns_router
+from app.api.endpoints.settings import router as settings_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Print confirmation log
+    # Startup: Start Redis Pub/Sub listener task
+    from app.api.endpoints.telemetry import redis_pubsub_listener
+    import asyncio
+    
     print("--------------------------------------------------")
     print(f"UABE Backend starting up in {settings.ENVIRONMENT} mode...")
     print("--------------------------------------------------")
+    
+    listener_task = asyncio.create_task(redis_pubsub_listener())
+    app.state.telemetry_listener = listener_task
+    
     yield
-    # Shutdown: Dispose engine connection pool
+    
+    # Shutdown: Cleanly cancel background tasks & engine connections
+    print("Cancelling Redis Pub/Sub telemetry listener task...")
+    listener_task.cancel()
+    try:
+        await listener_task
+    except asyncio.CancelledError:
+        pass
+        
     print("Disposing database connection pool...")
     await engine.dispose()
     print("UABE Backend shut down successfully.")
@@ -47,6 +64,8 @@ app.include_router(telemetry_router, prefix="/api/v1")
 app.include_router(email_webhook_router, prefix="/api/v1")
 app.include_router(billing_router, prefix="/api/v1")
 app.include_router(sandbox_router, prefix="/api/v1")
+app.include_router(campaigns_router, prefix="/api/v1")
+app.include_router(settings_router, prefix="/api/v1")
 
 @app.get("/health", status_code=status.HTTP_200_OK, tags=["Telemetry"])
 async def health_check():

@@ -60,7 +60,7 @@ async def seed_default_domains():
     
     async with async_session_maker() as session:
         result = await session.execute(select(SenderDomain))
-        existing_domain = result.scalar_one_or_none()
+        existing_domain = result.scalars().first()
         
         if not existing_domain:
             print("Seeding default Sender Domains...")

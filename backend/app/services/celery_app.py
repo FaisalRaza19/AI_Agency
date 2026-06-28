@@ -17,6 +17,13 @@ celery_app.conf.update(
     enable_utc=True,
     task_track_started=True,
     worker_prefetch_multiplier=1,  # Ensure fair task distribution among agents
+    broker_connection_retry_on_startup=False,
+    broker_transport_options={
+        "max_retries": 1,
+        "interval_start": 0.1,
+        "interval_step": 0.1,
+        "interval_max": 0.2
+    },
     # Discover background task wrappers from the core tasks module
     imports=("app.core.tasks",)
 )

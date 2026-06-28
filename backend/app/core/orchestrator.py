@@ -7,6 +7,8 @@ from app.database import async_session_maker
 from app.models import Campaign, CampaignWallet, AgentLog, Lead
 from app.core.gemini_client import llm_client
 from app.services.redis_service import redis_service
+from app.services.research import research_service
+from app.services.verifier import verifier_client
 
 class ExecutiveBrainOrchestrator:
     def __init__(self):
@@ -198,28 +200,132 @@ class ExecutiveBrainOrchestrator:
             )
             return []
 
+    async def check_budget_gate(self, campaign_id: str) -> bool:
+        """
+        Check if the campaign has remaining budget to continue execution.
+        Returns True if budget is safe, False otherwise.
+        """
+        async with async_session_maker() as session:
+            wallet_res = await session.execute(
+                select(CampaignWallet).where(CampaignWallet.campaign_id == campaign_id)
+            )
+            wallet = wallet_res.scalar_one_or_none()
+            if not wallet:
+                return True
+                
+            if wallet.is_liquidated:
+                return False
+                
+            if wallet.cost_spent >= wallet.budget:
+                wallet.is_liquidated = True
+                campaign_res = await session.execute(
+                    select(Campaign).where(Campaign.id == campaign_id)
+                )
+                campaign = campaign_res.scalar_one_or_none()
+                if campaign:
+                    campaign.status = "interrupted"
+                await session.commit()
+                
+                await self.log_agent_action(
+                    campaign_id=campaign_id,
+                    agent_name="executive",
+                    message=f"Budget Guardrail: Campaign frozen. Spent ${wallet.cost_spent:.2f} of ${wallet.budget:.2f}.",
+                    log_level="error"
+                )
+                return False
+                
+            return True
+
     async def route_execution_step(self, campaign_id: str, step_data: Dict[str, Any]) -> None:
         """
         Core router executing the specific node task within the state machine.
         Redlock guards prevent concurrency collisions.
         """
         lock_name = f"campaign_execution:{campaign_id}"
+        agent_role = step_data.get("agent", "executive").lower()
         
         try:
             # Use Redlock context wrapper to execute step safely
             async with redis_service.lock(lock_name, lock_timeout=60.0):
                 await self.log_agent_action(
                     campaign_id=campaign_id,
-                    agent_name=step_data.get("agent", "executive"),
+                    agent_name=agent_role,
                     message=f"Executing Milestone #{step_data.get('id')}: {step_data.get('milestone')}..."
                 )
                 
-                # Mock step processing delay
-                await asyncio.sleep(0.5)
+                if agent_role in ["deep_research", "researcher"]:
+                    # Run Deep Research spoke
+                    async with async_session_maker() as session:
+                        campaign_res = await session.execute(
+                            select(Campaign).where(Campaign.id == campaign_id)
+                        )
+                        campaign = campaign_res.scalar_one_or_none()
+                        if not campaign:
+                            raise ValueError(f"Campaign with ID '{campaign_id}' does not exist.")
+                            
+                    extracted_leads = await research_service.gather_leads_from_objective(
+                        campaign.objective, 
+                        campaign_id
+                    )
+                    
+                    added_count = 0
+                    cleansed_count = 0
+                    
+                    async with async_session_maker() as session:
+                        for lead in extracted_leads:
+                            email = lead.get("email")
+                            if not email:
+                                continue
+                                
+                            # Check if duplicate in current campaign
+                            exists_res = await session.execute(
+                                select(Lead).where(
+                                    Lead.campaign_id == campaign_id,
+                                    Lead.email == email
+                                )
+                            )
+                            if exists_res.scalar_one_or_none():
+                                continue
+                                
+                            # Run MillionVerifier check
+                            verification_result = await verifier_client.verify_email(email)
+                            if verification_result in ["invalid", "disposable"]:
+                                cleansed_count += 1
+                                await self.log_agent_action(
+                                    campaign_id=campaign_id,
+                                    agent_name="deep_research",
+                                    message=f"Pre-flight cleansing: Dropped lead '{email}' due to validation state '{verification_result}'.",
+                                    log_level="warning"
+                                )
+                                continue
+                                
+                            # Save valid lead
+                            db_lead = Lead(
+                                campaign_id=campaign_id,
+                                email=email,
+                                first_name=lead.get("first_name"),
+                                last_name=lead.get("last_name"),
+                                company=lead.get("company"),
+                                phone=lead.get("phone"),
+                                qualification_score=lead.get("qualification_score", 0.0),
+                                verification_status="verified" if verification_result == "ok" else "catch_all" if verification_result == "catchall" else "unknown"
+                            )
+                            session.add(db_lead)
+                            added_count += 1
+                        await session.commit()
+                        
+                    await self.log_agent_action(
+                        campaign_id=campaign_id,
+                        agent_name="deep_research",
+                        message=f"Deep Research complete. Added {added_count} leads, filtered {cleansed_count} invalid/disposable leads."
+                    )
+                else:
+                    # Fallback/mock processing for other spokes (copywriter, closer, etc.)
+                    await asyncio.sleep(0.5)
                 
                 await self.log_agent_action(
                     campaign_id=campaign_id,
-                    agent_name=step_data.get("agent", "executive"),
+                    agent_name=agent_role,
                     message=f"Completed Milestone #{step_data.get('id')} safely."
                 )
         except TimeoutError:
