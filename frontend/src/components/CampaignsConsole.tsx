@@ -75,6 +75,29 @@ export const CampaignsConsole: React.FC<CampaignsConsoleProps> = ({ isDark }) =>
   const [closerPrice, setCloserPrice] = useState<number>(0);
   const [closerCheckout, setCloserCheckout] = useState<string>('');
 
+  // Phase 6: Deliverables & QA States
+  interface DeliverableItem {
+    id: string;
+    campaign_id: string;
+    lead_id: string | null;
+    title: string;
+    content_type: string;
+    content_body: string;
+    image_url: string | null;
+    status: string;
+    refinement_count: number;
+    qa_feedback: string | null;
+    created_at: string;
+  }
+  const [activePanelTab, setActivePanelTab] = useState<'leads' | 'deliverables'>('leads');
+  const [deliverables, setDeliverables] = useState<DeliverableItem[]>([]);
+  const [deliverablesLoading, setDeliverablesLoading] = useState<boolean>(false);
+  const [selectedDeliverable, setSelectedDeliverable] = useState<DeliverableItem | null>(null);
+  const [showDeliverableModal, setShowDeliverableModal] = useState<boolean>(false);
+  const [rebuildFeedback, setRebuildFeedback] = useState<string>('');
+  const [rebuildingId, setRebuildingId] = useState<string | null>(null);
+  const [generatingType, setGeneratingType] = useState<string | null>(null);
+
   useEffect(() => {
     fetchCampaigns();
   }, []);
@@ -82,9 +105,11 @@ export const CampaignsConsole: React.FC<CampaignsConsoleProps> = ({ isDark }) =>
   useEffect(() => {
     if (selectedCampaign) {
       fetchCampaignDetails(selectedCampaign.id);
+      fetchCampaignDeliverables(selectedCampaign.id);
     } else {
       setLeads([]);
       setCampaignLogs([]);
+      setDeliverables([]);
     }
   }, [selectedCampaign]);
 
@@ -115,6 +140,65 @@ export const CampaignsConsole: React.FC<CampaignsConsoleProps> = ({ isDark }) =>
     } catch (err) {
       console.error('Failed to load campaign details:', err);
     }
+  };
+
+  const fetchCampaignDeliverables = async (campaignId: string) => {
+    setDeliverablesLoading(true);
+    try {
+      const res = await api.get(`/campaigns/${campaignId}/deliverables`);
+      setDeliverables(res.data);
+    } catch (err) {
+      console.error('Failed to load deliverables:', err);
+    } finally {
+      setDeliverablesLoading(false);
+    }
+  };
+
+  const handleGenerateDeliverable = async (contentType: string) => {
+    if (!selectedCampaign) return;
+    setGeneratingType(contentType);
+    try {
+      const res = await api.post(`/campaigns/${selectedCampaign.id}/deliverables/generate`, {
+        content_type: contentType
+      });
+      setDeliverables((prev) => [res.data, ...prev]);
+      alert(`Deliverable successfully compiled! Status: ${res.data.status}`);
+      await fetchCampaignDetails(selectedCampaign.id);
+    } catch (err) {
+      console.error('Generation error:', err);
+      alert('Failed to generate deliverable copywriting.');
+    } finally {
+      setGeneratingType(null);
+    }
+  };
+
+  const handleRebuildDeliverable = async (deliverableId: string) => {
+    if (!selectedCampaign) return;
+    setRebuildingId(deliverableId);
+    try {
+      const res = await api.post(`/campaigns/${selectedCampaign.id}/deliverables/${deliverableId}/rebuild`, {
+        custom_feedback: rebuildFeedback
+      });
+      setDeliverables((prev) =>
+        prev.map((d) => (d.id === deliverableId ? res.data : d))
+      );
+      if (selectedDeliverable && selectedDeliverable.id === deliverableId) {
+        setSelectedDeliverable(res.data);
+      }
+      setRebuildFeedback('');
+      alert(`Deliverable successfully rebuilt and re-validated! New status: ${res.data.status}`);
+      await fetchCampaignDetails(selectedCampaign.id);
+    } catch (err) {
+      console.error('Rebuild error:', err);
+      alert('Failed to rebuild deliverable.');
+    } finally {
+      setRebuildingId(null);
+    }
+  };
+
+  const handleOpenDeliverableDetail = (deliv: DeliverableItem) => {
+    setSelectedDeliverable(deliv);
+    setShowDeliverableModal(true);
   };
 
   const handleCreateCampaign = async (e: React.FormEvent) => {
@@ -173,7 +257,7 @@ export const CampaignsConsole: React.FC<CampaignsConsoleProps> = ({ isDark }) =>
     }
   };
 
-  const handleViewContract = async (leadId: string, company: string) => {
+  const handleViewContract = async (leadId: string, _company: string) => {
     if (!selectedCampaign) return;
     try {
       const res = await api.get(`/campaigns/${selectedCampaign.id}/leads/${leadId}/contract`, {
@@ -420,103 +504,202 @@ export const CampaignsConsole: React.FC<CampaignsConsoleProps> = ({ isDark }) =>
                 </div>
               </div>
 
-              {/* Leads Registry Table */}
-              <div className={`flex-1 border rounded-lg overflow-hidden flex flex-col shadow-sm ${isDark ? 'bg-google-cardDark border-google-borderDark' : 'bg-white border-gray-200'
+              {/* Leads Registry / Asset Deliverables Tabbed Panel */}
+              <div className={`flex-1 border rounded-lg overflow-hidden flex flex-col shadow-sm min-h-[400px] ${isDark ? 'bg-google-cardDark border-google-borderDark' : 'bg-white border-gray-200'
                 }`}>
-                <div className="p-4 border-b border-google-borderDark/20 bg-gray-50/50 dark:bg-google-sidebarDark/30 flex justify-between items-center">
-                  <h3 className="text-xs font-semibold uppercase tracking-wider font-mono text-google-textMuted flex items-center gap-2">
-                    <Users size={14} className="text-google-blue" />
-                    Leads Registry ({leads.length})
-                  </h3>
+                <div className="border-b border-google-borderDark/20 bg-gray-50/50 dark:bg-google-sidebarDark/30 flex justify-between items-center px-4">
+                  <div className="flex gap-4">
+                    <button
+                      onClick={() => setActivePanelTab('leads')}
+                      className={`py-3 text-xs font-bold uppercase tracking-wider font-mono cursor-pointer border-b-2 transition-all ${
+                        activePanelTab === 'leads'
+                          ? 'border-google-blue text-google-blue'
+                          : 'border-transparent text-google-textMuted hover:text-white'
+                      }`}
+                    >
+                      Leads Registry ({leads.length})
+                    </button>
+                    <button
+                      onClick={() => setActivePanelTab('deliverables')}
+                      className={`py-3 text-xs font-bold uppercase tracking-wider font-mono cursor-pointer border-b-2 transition-all ${
+                        activePanelTab === 'deliverables'
+                          ? 'border-google-blue text-google-blue'
+                          : 'border-transparent text-google-textMuted hover:text-white'
+                      }`}
+                    >
+                      Asset Deliverables ({deliverables.length})
+                    </button>
+                  </div>
+
+                  {activePanelTab === 'deliverables' && (
+                    <div className="flex gap-1.5 py-2">
+                      <button
+                        onClick={() => handleGenerateDeliverable('email')}
+                        disabled={generatingType !== null}
+                        className="bg-google-blue/10 hover:bg-google-blue/20 text-google-blue font-mono font-bold text-[9px] uppercase px-2 py-1 rounded transition-colors disabled:opacity-50 cursor-pointer"
+                      >
+                        {generatingType === 'email' ? 'Writing...' : '✉ Email'}
+                      </button>
+                      <button
+                        onClick={() => handleGenerateDeliverable('blog_post')}
+                        disabled={generatingType !== null}
+                        className="bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 font-mono font-bold text-[9px] uppercase px-2 py-1 rounded transition-colors disabled:opacity-50 cursor-pointer"
+                      >
+                        {generatingType === 'blog_post' ? 'Writing...' : '📄 Blog Post'}
+                      </button>
+                      <button
+                        onClick={() => handleGenerateDeliverable('ad_copy')}
+                        disabled={generatingType !== null}
+                        className="bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 font-mono font-bold text-[9px] uppercase px-2 py-1 rounded transition-colors disabled:opacity-50 cursor-pointer"
+                      >
+                        {generatingType === 'ad_copy' ? 'Writing...' : '📢 Ad Copy'}
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex-1 overflow-auto max-h-80">
-                  {leads.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center p-8 text-center h-48 space-y-2">
-                      <FolderOpen size={24} className="text-google-textMuted" />
-                      <span className="text-xs text-google-textMuted font-mono">No qualified outreach targets gathered yet. Wait for deep_research log step.</span>
-                    </div>
-                  ) : (
-                    <table className="w-full text-left border-collapse text-xs">
-                      <thead>
-                        <tr className="border-b dark:border-google-borderDark bg-gray-50/20 dark:bg-google-sidebarDark/10 text-google-textMuted font-mono uppercase text-[10px]">
-                          <th className="p-3">Company</th>
-                          <th className="p-3">Email Address</th>
-                          <th className="p-3 text-center">Score</th>
-                          <th className="p-3 text-right">Outreach Status</th>
-                          <th className="p-3 text-right">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-google-borderDark/10 font-mono">
-                        {leads.map((l) => (
-                          <tr key={l.id} className="hover:bg-gray-50/20 dark:hover:bg-google-borderDark/10">
-                            <td className="p-3 font-semibold">{l.company || 'Unknown Company'}</td>
-                            <td className="p-3">{l.email}</td>
-                            <td className="p-3 text-center">
-                              <span className="bg-google-blue/10 text-google-blue px-1.5 py-0.5 rounded font-bold text-[10px]">
-                                {l.qualification_score.toFixed(0)}%
-                              </span>
-                            </td>
-                            <td className="p-3 text-right">
-                              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded ${l.outreach_status === 'bounced'
-                                  ? 'bg-red-500/10 text-red-400'
-                                  : l.outreach_status === 'email_sent'
-                                    ? 'bg-yellow-500/10 text-yellow-400'
-                                    : l.outreach_status === 'replied'
-                                      ? 'bg-green-500/10 text-green-400'
-                                      : l.outreach_status === 'contract_pending'
-                                        ? 'bg-blue-500/10 text-blue-400'
-                                        : l.outreach_status === 'closed_won'
-                                          ? 'bg-emerald-500/10 text-emerald-400'
-                                          : 'bg-gray-500/10 text-gray-400'
-                                }`}>
-                                {l.outreach_status}
-                              </span>
-                            </td>
-                            <td className="p-3 text-right flex justify-end gap-1.5">
-                              {(l.outreach_status === 'replied' || l.outreach_status === 'pending' || l.outreach_status === 'email_sent') && (
-                                <button
-                                  onClick={() => handleSimulateCloser(l.id)}
-                                  disabled={actionLoading === l.id}
-                                  className="bg-google-blue hover:bg-google-blueDark text-white px-2 py-0.5 rounded font-semibold text-[10px] cursor-pointer transition-all disabled:opacity-50"
-                                >
-                                  {actionLoading === l.id ? 'Calling...' : '📞 Closer'}
-                                </button>
-                              )}
-                              {l.outreach_status === 'contract_pending' && (
-                                <>
-                                  <button
-                                    onClick={() => handleViewContract(l.id, l.company || 'Client')}
-                                    className="bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 px-2 py-0.5 rounded font-bold text-[10px] cursor-pointer"
-                                  >
-                                    📄 SLA
-                                  </button>
-                                  <button
-                                    onClick={() => handleMockPayment(l.id)}
-                                    className="bg-green-500/10 text-green-400 hover:bg-green-500/20 px-2 py-0.5 rounded font-bold text-[10px] cursor-pointer"
-                                  >
-                                    💳 Pay
-                                  </button>
-                                </>
-                              )}
-                              {l.outreach_status === 'closed_won' && (
-                                <>
-                                  <button
-                                    onClick={() => handleViewContract(l.id, l.company || 'Client')}
-                                    className="bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 px-2 py-0.5 rounded font-bold text-[10px] cursor-pointer"
-                                  >
-                                    📄 SLA
-                                  </button>
-                                  <span className="bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded font-bold text-[10px]">
-                                    ✅ Won
-                                  </span>
-                                </>
-                              )}
-                            </td>
+                  {activePanelTab === 'leads' ? (
+                    leads.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center p-8 text-center h-48 space-y-2">
+                        <FolderOpen size={24} className="text-google-textMuted" />
+                        <span className="text-xs text-google-textMuted font-mono">No qualified outreach targets gathered yet. Wait for deep_research log step.</span>
+                      </div>
+                    ) : (
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead>
+                          <tr className="border-b dark:border-google-borderDark bg-gray-50/20 dark:bg-google-sidebarDark/10 text-google-textMuted font-mono uppercase text-[10px]">
+                            <th className="p-3">Company</th>
+                            <th className="p-3">Email Address</th>
+                            <th className="p-3 text-center">Score</th>
+                            <th className="p-3 text-right">Outreach Status</th>
+                            <th className="p-3 text-right">Actions</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody className="divide-y divide-google-borderDark/10 font-mono">
+                          {leads.map((l) => (
+                            <tr key={l.id} className="hover:bg-gray-50/20 dark:hover:bg-google-borderDark/10">
+                              <td className="p-3 font-semibold">{l.company || 'Unknown Company'}</td>
+                              <td className="p-3">{l.email}</td>
+                              <td className="p-3 text-center">
+                                <span className="bg-google-blue/10 text-google-blue px-1.5 py-0.5 rounded font-bold text-[10px]">
+                                  {l.qualification_score.toFixed(0)}%
+                                </span>
+                              </td>
+                              <td className="p-3 text-right">
+                                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded ${l.outreach_status === 'bounced'
+                                    ? 'bg-red-500/10 text-red-400'
+                                    : l.outreach_status === 'email_sent'
+                                      ? 'bg-yellow-500/10 text-yellow-400'
+                                      : l.outreach_status === 'replied'
+                                        ? 'bg-green-500/10 text-green-400'
+                                        : l.outreach_status === 'contract_pending'
+                                          ? 'bg-blue-500/10 text-blue-400'
+                                          : l.outreach_status === 'closed_won'
+                                            ? 'bg-emerald-500/10 text-emerald-400'
+                                            : 'bg-gray-500/10 text-gray-400'
+                                  }`}>
+                                  {l.outreach_status}
+                                </span>
+                              </td>
+                              <td className="p-3 text-right flex justify-end gap-1.5">
+                                {(l.outreach_status === 'replied' || l.outreach_status === 'pending' || l.outreach_status === 'email_sent') && (
+                                  <button
+                                    onClick={() => handleSimulateCloser(l.id)}
+                                    disabled={actionLoading === l.id}
+                                    className="bg-google-blue hover:bg-google-blueDark text-white px-2 py-0.5 rounded font-semibold text-[10px] cursor-pointer transition-all disabled:opacity-50"
+                                  >
+                                    {actionLoading === l.id ? 'Calling...' : '📞 Closer'}
+                                  </button>
+                                )}
+                                {l.outreach_status === 'contract_pending' && (
+                                  <>
+                                    <button
+                                      onClick={() => handleViewContract(l.id, l.company || 'Client')}
+                                      className="bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 px-2 py-0.5 rounded font-bold text-[10px] cursor-pointer"
+                                    >
+                                      📄 SLA
+                                    </button>
+                                    <button
+                                      onClick={() => handleMockPayment(l.id)}
+                                      className="bg-green-500/10 text-green-400 hover:bg-green-500/20 px-2 py-0.5 rounded font-bold text-[10px] cursor-pointer"
+                                    >
+                                      💳 Pay
+                                    </button>
+                                  </>
+                                )}
+                                {l.outreach_status === 'closed_won' && (
+                                  <>
+                                    <button
+                                      onClick={() => handleViewContract(l.id, l.company || 'Client')}
+                                      className="bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 px-2 py-0.5 rounded font-bold text-[10px] cursor-pointer"
+                                    >
+                                      📄 SLA
+                                    </button>
+                                    <span className="bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded font-bold text-[10px]">
+                                      ✅ Won
+                                    </span>
+                                  </>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )
+                  ) : (
+                    deliverablesLoading ? (
+                      <div className="text-center py-12 text-xs font-mono text-google-textMuted">Loading deliverables...</div>
+                    ) : deliverables.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center p-8 text-center h-48 space-y-2">
+                        <FolderOpen size={24} className="text-google-textMuted" />
+                        <span className="text-xs text-google-textMuted font-mono">No marketing deliverables generated yet. Use buttons above to compile assets.</span>
+                      </div>
+                    ) : (
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead>
+                          <tr className="border-b dark:border-google-borderDark bg-gray-50/20 dark:bg-google-sidebarDark/10 text-google-textMuted font-mono uppercase text-[10px]">
+                            <th className="p-3">Deliverable Asset Title</th>
+                            <th className="p-3">Format</th>
+                            <th className="p-3 text-center">Tries</th>
+                            <th className="p-3 text-right">QA Status</th>
+                            <th className="p-3 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-google-borderDark/10 font-mono">
+                          {deliverables.map((d) => (
+                            <tr key={d.id} className="hover:bg-gray-50/20 dark:hover:bg-google-borderDark/10">
+                              <td className="p-3 font-semibold truncate max-w-[200px]" title={d.title}>{d.title}</td>
+                              <td className="p-3">
+                                <span className="bg-gray-500/10 text-gray-400 px-1.5 py-0.5 rounded text-[10px] uppercase font-bold">
+                                  {d.content_type}
+                                </span>
+                              </td>
+                              <td className="p-3 text-center">{d.refinement_count}/3</td>
+                              <td className="p-3 text-right">
+                                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded ${
+                                  d.status === 'approved'
+                                    ? 'bg-emerald-500/10 text-emerald-400'
+                                    : d.status === 'manual_review_pending'
+                                      ? 'bg-red-500/10 text-red-400'
+                                      : 'bg-yellow-500/10 text-yellow-400'
+                                }`}>
+                                  {d.status}
+                                </span>
+                              </td>
+                              <td className="p-3 text-right">
+                                <button
+                                  onClick={() => handleOpenDeliverableDetail(d)}
+                                  className="bg-google-blue hover:bg-google-blueDark text-white px-2.5 py-0.5 rounded font-semibold text-[10px] cursor-pointer"
+                                >
+                                  👁 View
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )
                   )}
                 </div>
               </div>
@@ -734,6 +917,125 @@ export const CampaignsConsole: React.FC<CampaignsConsoleProps> = ({ isDark }) =>
                     className="w-full bg-google-borderDark hover:bg-google-borderDark/80 text-gray-300 py-2 rounded text-xs font-semibold font-mono transition-colors cursor-pointer"
                   >
                     Close Log View
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Dynamic Deliverable Preview & QA Refinement Modal */}
+      {showDeliverableModal && selectedDeliverable && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className={`w-full max-w-5xl h-[85vh] rounded-xl shadow-2xl overflow-hidden border flex flex-col ${isDark ? 'bg-google-cardDark border-google-borderDark text-gray-100' : 'bg-white border-gray-200 text-gray-800'
+            }`}>
+            <div className="p-5 border-b border-google-borderDark/20 bg-gray-50/50 dark:bg-google-sidebarDark/30 flex justify-between items-center">
+              <h3 className="text-md font-bold font-sans flex items-center gap-2">
+                <FolderOpen size={18} className="text-google-blue" />
+                Deliverable Asset Viewer & Editor
+              </h3>
+              <button
+                onClick={() => setShowDeliverableModal(false)}
+                className="text-google-textMuted hover:text-white font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="flex-1 grid grid-cols-1 md:grid-cols-12 overflow-hidden">
+              {/* Left Column: Title, Content, Image */}
+              <div className="md:col-span-8 flex flex-col p-5 border-r border-google-borderDark/20 overflow-y-auto space-y-4">
+                <div>
+                  <span className="text-[10px] font-mono uppercase tracking-wider text-google-textMuted">Deliverable Title</span>
+                  <h4 className="text-md font-bold font-sans mt-0.5">{selectedDeliverable.title}</h4>
+                </div>
+
+                <div className="flex-1 flex flex-col bg-google-sidebarDark/10 p-4 border border-google-borderDark/20 rounded-lg overflow-y-auto">
+                  <span className="text-[10px] font-mono uppercase tracking-wider text-google-textMuted mb-2 block">Content Copy</span>
+                  <pre className="text-xs font-mono whitespace-pre-wrap leading-relaxed flex-1 overflow-auto">{selectedDeliverable.content_body}</pre>
+                </div>
+
+                {selectedDeliverable.image_url && (
+                  <div className="border border-google-borderDark/20 rounded-lg overflow-hidden bg-google-sidebarDark/10 p-3">
+                    <span className="text-[10px] font-mono uppercase tracking-wider text-google-textMuted mb-2 block">Generated Marketing Graphic Asset</span>
+                    <div className="max-w-md mx-auto aspect-video rounded overflow-hidden bg-black/35 relative flex items-center justify-center border border-google-borderDark/10">
+                      <img
+                        src={selectedDeliverable.image_url}
+                        alt="Generated Campaign Graphic"
+                        className="object-cover w-full h-full"
+                        onError={(e) => {
+                          // Display placeholder graphic if mock image fails to load
+                          (e.target as HTMLElement).style.display = 'none';
+                        }}
+                      />
+                      <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center bg-google-blue/10">
+                        <FolderOpen className="text-google-blue mb-1" size={24} />
+                        <span className="text-[10px] font-mono uppercase tracking-wider text-google-blue font-bold">UABE Automated Graphic Asset</span>
+                        <span className="text-[9px] text-google-textMuted font-mono mt-0.5">{selectedDeliverable.image_url}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Right Column: QA Reports & Manual Refinement */}
+              <div className="md:col-span-4 flex flex-col p-5 space-y-5 justify-between bg-google-sidebarDark/10">
+                <div className="space-y-4 overflow-y-auto">
+                  <div>
+                    <span className="text-[10px] font-mono uppercase tracking-wider text-google-textMuted">QA Approval Status</span>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className={`text-[10px] font-mono font-bold uppercase px-2 py-0.5 rounded ${
+                        selectedDeliverable.status === 'approved'
+                          ? 'bg-emerald-500/10 text-emerald-400'
+                          : selectedDeliverable.status === 'manual_review_pending'
+                            ? 'bg-red-500/10 text-red-400'
+                            : 'bg-yellow-500/10 text-yellow-400'
+                      }`}>
+                        {selectedDeliverable.status}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <span className="text-[10px] font-mono uppercase tracking-wider text-google-textMuted font-bold block">Refinement Loops Limit</span>
+                    <span className="text-xs font-mono text-gray-300 mt-1 block">{selectedDeliverable.refinement_count} / 3 Attempts Used</span>
+                  </div>
+
+                  {selectedDeliverable.qa_feedback && (
+                    <div className="p-3 bg-yellow-500/5 border border-yellow-500/10 rounded-lg">
+                      <span className="text-[10px] font-mono uppercase tracking-wider text-yellow-500 font-bold block mb-1">Editor Rejection Feedback</span>
+                      <p className="text-[11px] font-mono text-yellow-400 leading-relaxed whitespace-pre-wrap">{selectedDeliverable.qa_feedback}</p>
+                    </div>
+                  )}
+
+                  <div className="pt-2">
+                    <label className="text-[10px] font-mono uppercase tracking-wider text-google-textMuted font-bold block mb-1">Request Copy Refinement</label>
+                    <textarea
+                      value={rebuildFeedback}
+                      onChange={(e) => setRebuildFeedback(e.target.value)}
+                      placeholder="Add specific details or styling changes requested (e.g. 'Add call to action at the end', 'Make the tone more aggressive')."
+                      rows={4}
+                      className={`w-full p-2.5 text-xs rounded border focus:outline-none focus:ring-1 focus:ring-google-blue font-mono ${
+                        isDark ? 'bg-google-sidebarDark border-google-borderDark text-gray-100' : 'bg-white border-gray-200 text-gray-800'
+                      }`}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2 pt-4 border-t border-google-borderDark/20">
+                  <button
+                    onClick={() => handleRebuildDeliverable(selectedDeliverable.id)}
+                    disabled={rebuildingId !== null || selectedDeliverable.refinement_count >= 3}
+                    className="w-full bg-google-blue hover:bg-google-blueDark disabled:bg-gray-700 text-white py-2 rounded text-xs font-semibold font-mono tracking-wider transition-colors shadow-sm cursor-pointer disabled:opacity-50"
+                  >
+                    {rebuildingId ? 'Refining Copy...' : selectedDeliverable.refinement_count >= 3 ? 'Refinement Limit Reached' : '🔄 Refine Copy Asset'}
+                  </button>
+                  <button
+                    onClick={() => setShowDeliverableModal(false)}
+                    className="w-full bg-google-borderDark hover:bg-google-borderDark/80 text-gray-300 py-2 rounded text-xs font-semibold font-mono transition-colors cursor-pointer"
+                  >
+                    Close Viewer
                   </button>
                 </div>
               </div>

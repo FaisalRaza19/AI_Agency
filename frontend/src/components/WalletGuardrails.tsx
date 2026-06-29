@@ -2,10 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Wallet, 
   RefreshCw, 
-  ShieldAlert, 
-  CheckCircle,
-  FileCode,
-  DollarSign
+  ShieldAlert
 } from 'lucide-react';
 import { api } from '../services/api';
 

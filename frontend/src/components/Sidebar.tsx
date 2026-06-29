@@ -5,7 +5,6 @@ import {
   Volume2, 
   Wallet, 
   Settings, 
-  Menu, 
   ChevronLeft, 
   ChevronRight,
   Sun,

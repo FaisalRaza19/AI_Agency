@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Settings,
   Save,
   Key,
   Globe,
@@ -27,7 +26,7 @@ interface MasterSettingsProps {
 }
 
 export const MasterSettings: React.FC<MasterSettingsProps> = ({ isDark }) => {
-  const [configs, setConfigs] = useState<ConfigItem[]>([]);
+  const [_, setConfigs] = useState<ConfigItem[]>([]);
   const [domains, setDomains] = useState<DomainItem[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [savingKey, setSavingKey] = useState<string | null>(null);

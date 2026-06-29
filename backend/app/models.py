@@ -39,6 +39,7 @@ class Campaign(Base):
     wallet: Mapped["CampaignWallet"] = relationship("CampaignWallet", back_populates="campaign", cascade="all, delete-orphan")
     leads: Mapped[List["Lead"]] = relationship("Lead", back_populates="campaign", cascade="all, delete-orphan")
     logs: Mapped[List["AgentLog"]] = relationship("AgentLog", back_populates="campaign", cascade="all, delete-orphan")
+    deliverables: Mapped[List["Deliverable"]] = relationship("Deliverable", back_populates="campaign", cascade="all, delete-orphan")
 
 
 class CampaignWallet(Base):
@@ -146,4 +147,24 @@ class SystemConfig(Base):
     value: Mapped[str] = mapped_column(Text, nullable=False)  # Encrypted Fernet string
     description: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=get_utc_now, nullable=False)
+
+
+class Deliverable(Base):
+    __tablename__ = "campaign_deliverables"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    campaign_id: Mapped[str] = mapped_column(String(36), ForeignKey("campaigns.id"), index=True, nullable=False)
+    lead_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("leads.id"), index=True, nullable=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)  # e.g., "Dental Clinic SEO Strategy"
+    content_type: Mapped[str] = mapped_column(String(50), nullable=False)  # "email", "blog_post", "ad_copy"
+    content_body: Mapped[str] = mapped_column(Text, nullable=False)  # Markdown text
+    image_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)  # DALL-E generated asset link
+    status: Mapped[str] = mapped_column(String(50), default="draft", nullable=False)  # "draft", "qa_pending", "approved", "manual_review_pending"
+    refinement_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # Safe cap tracker
+    qa_feedback: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=get_utc_now, nullable=False)
+
+    # Relationships
+    campaign: Mapped["Campaign"] = relationship("Campaign", back_populates="deliverables")
+    lead: Mapped[Optional["Lead"]] = relationship("Lead")
 

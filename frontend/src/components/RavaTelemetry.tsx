@@ -1,9 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  Activity, 
   RefreshCw, 
   ArrowUpRight, 
-  CheckCircle,
   FileCode,
   Gauge
 } from 'lucide-react';
@@ -11,8 +9,8 @@ import { api } from '../services/api';
 
 interface StagedPrompt {
   id: number;
-  prompt_key: str;
-  prompt_text: str;
+  prompt_key: string;
+  prompt_text: string;
   version: number;
   status: string;
   benchmark_score: number | null;
@@ -26,7 +24,7 @@ export const RavaTelemetry: React.FC<RavaTelemetryProps> = ({ isDark }) => {
   const [prompts, setPrompts] = useState<StagedPrompt[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [actionLoading, setActionLoading] = useState<number | null>(null);
-  const [error, setError] = useState<string>('');
+  const [_, setError] = useState<string>('');
 
   useEffect(() => {
     fetchPrompts();
