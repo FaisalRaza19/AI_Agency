@@ -89,7 +89,7 @@ export const CampaignsConsole: React.FC<CampaignsConsoleProps> = ({ isDark }) =>
     qa_feedback: string | null;
     created_at: string;
   }
-  const [activePanelTab, setActivePanelTab] = useState<'leads' | 'deliverables'>('leads');
+  const [activePanelTab, setActivePanelTab] = useState<'leads' | 'deliverables' | 'reflection'>('leads');
   const [deliverables, setDeliverables] = useState<DeliverableItem[]>([]);
   const [deliverablesLoading, setDeliverablesLoading] = useState<boolean>(false);
   const [selectedDeliverable, setSelectedDeliverable] = useState<DeliverableItem | null>(null);
@@ -97,6 +97,18 @@ export const CampaignsConsole: React.FC<CampaignsConsoleProps> = ({ isDark }) =>
   const [rebuildFeedback, setRebuildFeedback] = useState<string>('');
   const [rebuildingId, setRebuildingId] = useState<string | null>(null);
   const [generatingType, setGeneratingType] = useState<string | null>(null);
+
+  interface ReflectionLogItem {
+    id: number;
+    campaign_id: string | null;
+    agent_name: string;
+    log_level: string;
+    message: string;
+    is_reflection: boolean;
+    created_at: string;
+  }
+  const [reflectionLogs, setReflectionLogs] = useState<ReflectionLogItem[]>([]);
+  const [reflectionLoading, setReflectionLoading] = useState<boolean>(false);
 
   useEffect(() => {
     fetchCampaigns();
@@ -106,10 +118,12 @@ export const CampaignsConsole: React.FC<CampaignsConsoleProps> = ({ isDark }) =>
     if (selectedCampaign) {
       fetchCampaignDetails(selectedCampaign.id);
       fetchCampaignDeliverables(selectedCampaign.id);
+      fetchReflectionLogs(selectedCampaign.id);
     } else {
       setLeads([]);
       setCampaignLogs([]);
       setDeliverables([]);
+      setReflectionLogs([]);
     }
   }, [selectedCampaign]);
 
@@ -151,6 +165,31 @@ export const CampaignsConsole: React.FC<CampaignsConsoleProps> = ({ isDark }) =>
       console.error('Failed to load deliverables:', err);
     } finally {
       setDeliverablesLoading(false);
+    }
+  };
+
+  const fetchReflectionLogs = async (campaignId: string) => {
+    try {
+      const res = await api.get(`/campaigns/${campaignId}/reflection-logs`);
+      setReflectionLogs(res.data);
+    } catch (err) {
+      console.error('Failed to load reflection logs:', err);
+    }
+  };
+
+  const handleTriggerReflection = async () => {
+    if (!selectedCampaign) return;
+    setReflectionLoading(true);
+    try {
+      await api.post(`/campaigns/${selectedCampaign.id}/reflect`);
+      await Promise.all([
+        fetchReflectionLogs(selectedCampaign.id),
+        fetchCampaignDetails(selectedCampaign.id)
+      ]);
+    } catch (err: any) {
+      alert(err.response?.data?.detail || 'Reflection loop failed.');
+    } finally {
+      setReflectionLoading(false);
     }
   };
 
@@ -529,6 +568,16 @@ export const CampaignsConsole: React.FC<CampaignsConsoleProps> = ({ isDark }) =>
                     >
                       Asset Deliverables ({deliverables.length})
                     </button>
+                    <button
+                      onClick={() => setActivePanelTab('reflection')}
+                      className={`py-3 text-xs font-bold uppercase tracking-wider font-mono cursor-pointer border-b-2 transition-all ${
+                        activePanelTab === 'reflection'
+                          ? 'border-google-blue text-google-blue'
+                          : 'border-transparent text-google-textMuted hover:text-white'
+                      }`}
+                    >
+                      Self-Reflection ({reflectionLogs.length})
+                    </button>
                   </div>
 
                   {activePanelTab === 'deliverables' && (
@@ -556,10 +605,23 @@ export const CampaignsConsole: React.FC<CampaignsConsoleProps> = ({ isDark }) =>
                       </button>
                     </div>
                   )}
+
+                  {activePanelTab === 'reflection' && (
+                    <div className="flex gap-1.5 py-2">
+                      <button
+                        onClick={handleTriggerReflection}
+                        disabled={reflectionLoading}
+                        className="bg-yellow-500/10 hover:bg-yellow-500/20 text-yellow-400 font-mono font-bold text-[9px] uppercase px-2 py-1 rounded transition-colors disabled:opacity-50 cursor-pointer flex items-center gap-1"
+                      >
+                        <RefreshCw size={10} className={reflectionLoading ? "animate-spin" : ""} />
+                        {reflectionLoading ? 'Reflecting...' : '🧠 Run Reflection'}
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex-1 overflow-auto max-h-80">
-                  {activePanelTab === 'leads' ? (
+                  {activePanelTab === 'leads' && (
                     leads.length === 0 ? (
                       <div className="flex flex-col items-center justify-center p-8 text-center h-48 space-y-2">
                         <FolderOpen size={24} className="text-google-textMuted" />
@@ -647,7 +709,9 @@ export const CampaignsConsole: React.FC<CampaignsConsoleProps> = ({ isDark }) =>
                         </tbody>
                       </table>
                     )
-                  ) : (
+                  )}
+
+                  {activePanelTab === 'deliverables' && (
                     deliverablesLoading ? (
                       <div className="text-center py-12 text-xs font-mono text-google-textMuted">Loading deliverables...</div>
                     ) : deliverables.length === 0 ? (
@@ -699,6 +763,29 @@ export const CampaignsConsole: React.FC<CampaignsConsoleProps> = ({ isDark }) =>
                           ))}
                         </tbody>
                       </table>
+                    )
+                  )}
+
+                  {activePanelTab === 'reflection' && (
+                    reflectionLogs.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center p-8 text-center h-48 space-y-2">
+                        <FolderOpen size={24} className="text-google-textMuted" />
+                        <span className="text-xs text-google-textMuted font-mono">No self-reflection cycles executed yet. Click "Run Reflection" to audit logs.</span>
+                      </div>
+                    ) : (
+                      <div className="p-4 space-y-4 font-mono">
+                        {reflectionLogs.map((log) => (
+                          <div key={log.id} className="border border-google-borderDark/20 bg-gray-50/50 dark:bg-google-sidebarDark/15 p-3 rounded-lg flex flex-col gap-2 text-xs">
+                            <div className="flex justify-between items-center text-[10px] text-google-textMuted border-b border-google-borderDark/10 pb-1.5 font-bold uppercase">
+                              <span className="text-yellow-400">🧠 Diagnostic Audit Report</span>
+                              <span>{new Date(log.created_at).toLocaleString()}</span>
+                            </div>
+                            <pre className="whitespace-pre-wrap leading-relaxed font-mono text-[11px] text-gray-700 dark:text-gray-300">
+                              {log.message}
+                            </pre>
+                          </div>
+                        ))}
+                      </div>
                     )
                   )}
                 </div>

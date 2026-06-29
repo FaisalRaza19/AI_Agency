@@ -12,6 +12,7 @@ from app.api.endpoints.billing import router as billing_router
 from app.api.endpoints.sandbox import router as sandbox_router
 from app.api.endpoints.campaigns import router as campaigns_router
 from app.api.endpoints.settings import router as settings_router
+from app.api.endpoints.reflection import router as reflection_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -66,6 +67,7 @@ app.include_router(billing_router, prefix="/api/v1")
 app.include_router(sandbox_router, prefix="/api/v1")
 app.include_router(campaigns_router, prefix="/api/v1")
 app.include_router(settings_router, prefix="/api/v1")
+app.include_router(reflection_router, prefix="/api/v1")
 
 @app.get("/health", status_code=status.HTTP_200_OK, tags=["Telemetry"])
 async def health_check():
