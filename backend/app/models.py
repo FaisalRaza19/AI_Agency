@@ -104,6 +104,7 @@ class ModuleRegistry(Base):
 
     id: Mapped[str] = mapped_column(String(100), primary_key=True)  # Module Name, e.g. "StockMarketModule"
     path: Mapped[str] = mapped_column(String(255), nullable=False)  # Local path to dynamic python script
+    source_code: Mapped[str] = mapped_column(Text, nullable=False)  # Python script string content
     config_schema: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)  # Configuration parameter requirements
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=get_utc_now, nullable=False)

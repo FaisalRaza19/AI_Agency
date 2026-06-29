@@ -72,10 +72,39 @@ class SandboxSafetyChecker(ast.NodeVisitor):
 class SandboxedCodeExecutor:
     """
     Subprocess-isolated sandbox runner.
-    Checks code strings statically, compiles, and runs them inside isolated subprocess frames.
+    Checks code strings statically, compiles, and runs them inside isolated subprocess frames
+    using the WSLSecureAgentSandbox virtual environment.
     """
     def __init__(self, timeout_limit: float = 5.0):
         self.timeout_limit = timeout_limit
+        self._module_cache = {}
+
+    def clear_module_cache(self):
+        """Clears local execution cache for dynamic hot-reloading."""
+        self._module_cache.clear()
+
+    def _ensure_sandbox_venv(self) -> tuple[str, str]:
+        """Ensures that the isolation virtual environment exists on disk."""
+        backend_dir = r"e:\Documents\AI_AGENCY\backend"
+        sandbox_dir = os.path.join(backend_dir, "WSLSecureAgentSandbox")
+        venv_dir = os.path.join(sandbox_dir, "venv")
+        
+        if not os.path.exists(venv_dir):
+            os.makedirs(sandbox_dir, exist_ok=True)
+            # Create venv utilizing the host's base interpreter
+            subprocess.run([sys.executable, "-m", "venv", venv_dir], check=True)
+            
+        # Select python path
+        if os.name == "nt":
+            windows_python = os.path.join(venv_dir, "Scripts", "python.exe")
+        else:
+            windows_python = os.path.join(venv_dir, "bin", "python")
+
+        # Convert backslashes for WSL execution
+        # e.g., e:\Documents\AI_AGENCY\backend\WSLSecureAgentSandbox\venv\bin\python
+        wsl_python = "/mnt/e/Documents/AI_AGENCY/backend/WSLSecureAgentSandbox/venv/bin/python"
+        
+        return windows_python, wsl_python
 
     def static_analyze(self, code_str: str) -> List[str]:
         """
@@ -91,30 +120,48 @@ class SandboxedCodeExecutor:
         checker.visit(tree)
         return checker.errors
 
-    def execute(self, code_str: str) -> Dict[str, Any]:
+    def execute(self, code_str: str, use_wsl: bool = False, bypass_safety_check: bool = False) -> Dict[str, Any]:
         """
         Validates and executes a code snippet.
         Enforces a execution timeout, captures stdout/stderr, and terminates zombie processes.
+        Runs inside the WSLSecureAgentSandbox virtual environment.
         """
-        # 1. Run static checks first
-        violations = self.static_analyze(code_str)
-        if violations:
-            return {
-                "status": "rejected",
-                "stdout": "",
-                "stderr": "\n".join(violations),
-                "exit_code": -1
-            }
+        # 1. Run static checks first if not bypassed
+        if not bypass_safety_check:
+            violations = self.static_analyze(code_str)
+            if violations:
+                return {
+                    "status": "rejected",
+                    "stdout": "",
+                    "stderr": "\n".join(violations),
+                    "exit_code": -1
+                }
 
-        # 2. Write code to a temporary script file
-        fd, temp_file_path = tempfile.mkstemp(suffix=".py", text=True)
+        # Ensure sandbox virtual environment exists
+        windows_python, wsl_python = self._ensure_sandbox_venv()
+
+        # Create temporary storage path inside project root (accessible to WSL)
+        backend_dir = r"e:\Documents\AI_AGENCY\backend"
+        temp_dir = os.path.join(backend_dir, "storage", "sandbox_temp")
+        os.makedirs(temp_dir, exist_ok=True)
+
+        # Write code to temporary file
+        fd, temp_file_path = tempfile.mkstemp(dir=temp_dir, suffix=".py", text=True)
         try:
             with os.fdopen(fd, "w") as tmp:
                 tmp.write(code_str)
 
+            # Determine command execution array
+            if use_wsl:
+                # Translate path, e.g., e:\Documents\AI_AGENCY\backend\storage\sandbox_temp\abc.py -> /mnt/e/Documents/AI_AGENCY/backend/storage/sandbox_temp/abc.py
+                wsl_script_path = temp_file_path.replace("\\", "/").replace("E:", "/mnt/e").replace("e:", "/mnt/e")
+                cmd = ["wsl", wsl_python, wsl_script_path]
+            else:
+                cmd = [windows_python, temp_file_path]
+
             # 3. Launch isolated subprocess execution
             process = subprocess.Popen(
-                [sys.executable, temp_file_path],
+                cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True
@@ -129,9 +176,8 @@ class SandboxedCodeExecutor:
                     "exit_code": process.returncode
                 }
             except subprocess.TimeoutExpired:
-                # 4. Clean zombie process termination on timeout (explicit task kill / termination)
+                # 4. Clean zombie process termination on timeout
                 process.kill()
-                # Await child to ensure it's fully cleaned up from system resources
                 stdout, stderr = process.communicate()
                 
                 timeout_msg = f"Security Error: Code execution exceeded the {self.timeout_limit} second timeout limit. Subprocess terminated."

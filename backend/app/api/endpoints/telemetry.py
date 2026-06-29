@@ -64,13 +64,24 @@ async def redis_pubsub_listener():
         try:
             redis_client = aioredis.from_url(settings.REDIS_URL)
             pubsub = redis_client.pubsub()
-            await pubsub.subscribe("uabe_telemetry_broadcast")
+            await pubsub.subscribe("uabe_telemetry_broadcast", "uabe:registry:refresh")
             
             async for message in pubsub.listen():
                 if message and message["type"] == "message":
                     try:
-                        data = json.loads(message["data"])
-                        await manager.local_broadcast(data)
+                        channel = message.get("channel")
+                        if isinstance(channel, bytes):
+                            channel = channel.decode("utf-8")
+                            
+                        if channel == "uabe:registry:refresh":
+                            import importlib
+                            importlib.invalidate_caches()
+                            from app.services.sandbox_executor import sandbox_executor
+                            sandbox_executor.clear_module_cache()
+                            print("[HOT-RELOAD] Dynamic registry refresh intercepted. Invalidated importlib cache registers.")
+                        else:
+                            data = json.loads(message["data"])
+                            await manager.local_broadcast(data)
                     except Exception as ex:
                         print(f"[TELEMETRY] Error parsing pubsub message: {ex}")
         except asyncio.CancelledError:
