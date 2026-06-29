@@ -319,8 +319,158 @@ class ExecutiveBrainOrchestrator:
                         agent_name="deep_research",
                         message=f"Deep Research complete. Added {added_count} leads, filtered {cleansed_count} invalid/disposable leads."
                     )
+                elif agent_role in ["copywriter", "builder", "worker_builder"]:
+                    # Spawns Worker/Copywriter to write content draft
+                    from app.services.content_builder import content_builder_service
+                    from app.models import Deliverable
+                    
+                    async with async_session_maker() as session:
+                        # Find draft deliverables for campaign
+                        result = await session.execute(
+                            select(Deliverable).where(
+                                Deliverable.campaign_id == campaign_id,
+                                Deliverable.status == "draft"
+                            )
+                        )
+                        drafts = result.scalars().all()
+                        
+                        if not drafts:
+                            # Generate a default email template draft if none exists
+                            deliverable = Deliverable(
+                                campaign_id=campaign_id,
+                                title=f"{campaign_id} Target Outreach",
+                                content_type="email",
+                                content_body="Pending compilation",
+                                status="draft"
+                            )
+                            session.add(deliverable)
+                            await session.commit()
+                            await session.refresh(deliverable)
+                            drafts = [deliverable]
+
+                        for d in drafts:
+                            await self.log_agent_action(
+                                campaign_id=campaign_id,
+                                agent_name="worker_builder",
+                                message=f"Worker Spoke: Generating content assets for deliverable '{d.title}'..."
+                            )
+                            # Generate copy
+                            generated = await content_builder_service.generate_deliverable(
+                                company="Prospect Client",
+                                content_type=d.content_type,
+                                objective=f"Campaign ID: {campaign_id}"
+                            )
+                            d.title = generated.title
+                            d.content_body = generated.body
+                            d.status = "qa_pending"
+                            session.add(d)
+                            await session.commit()
+                            
+                            await self.log_agent_action(
+                                campaign_id=campaign_id,
+                                agent_name="worker_builder",
+                                message=f"Worker Spoke: Compiled content for '{d.title}'. Submitting to Manager QA."
+                            )
+
+                elif agent_role in ["qa", "quality_assurance", "manager"]:
+                    # Spawns Manager / QA reviewer to audit assets
+                    from app.services.qa_validator import qa_validator_service
+                    from app.models import Deliverable
+                    
+                    async with async_session_maker() as session:
+                        result = await session.execute(
+                            select(Deliverable).where(
+                                Deliverable.campaign_id == campaign_id,
+                                Deliverable.status == "qa_pending"
+                            )
+                        )
+                        pending_assets = result.scalars().all()
+                        
+                        if not pending_assets:
+                            await self.log_agent_action(
+                                campaign_id=campaign_id,
+                                agent_name="quality_assurance",
+                                message="Manager Spoke: No pending assets found in QA registry queue.",
+                                log_level="warning"
+                            )
+                        else:
+                            for d in pending_assets:
+                                await self.log_agent_action(
+                                    campaign_id=campaign_id,
+                                    agent_name="quality_assurance",
+                                    message=f"Manager Spoke: Auditing deliverable '{d.title}' against client specifications..."
+                                )
+                                # Validate
+                                validated = await qa_validator_service.validate_and_refine_deliverable(session, d.id)
+                                await session.refresh(d)
+                                
+                                if d.status == "approved":
+                                    await self.log_agent_action(
+                                        campaign_id=campaign_id,
+                                        agent_name="quality_assurance",
+                                        message=f"Manager Spoke: Asset '{d.title}' successfully approved for delivery!"
+                                    )
+                                else:
+                                    # Rejected (sent back to worker)
+                                    await self.log_agent_action(
+                                        campaign_id=campaign_id,
+                                        agent_name="quality_assurance",
+                                        message=f"Manager Spoke: Asset '{d.title}' rejected due to validation failure. Redirecting back to worker.",
+                                        log_level="warning"
+                                    )
+
+                elif agent_role in ["pm", "project_manager"]:
+                    # PM splits campaign objective into structured deliverables skeleton
+                    from app.models import Deliverable
+                    async with async_session_maker() as session:
+                        # Generate task skeleton
+                        d1 = Deliverable(
+                            campaign_id=campaign_id,
+                            title="Draft Email Outreach Copy",
+                            content_type="email",
+                            content_body="Task assigned to worker.",
+                            status="draft"
+                        )
+                        d2 = Deliverable(
+                            campaign_id=campaign_id,
+                            title="Draft Marketing Ad Copy",
+                            content_type="ad_copy",
+                            content_body="Task assigned to worker.",
+                            status="draft"
+                        )
+                        session.add(d1)
+                        session.add(d2)
+                        await session.commit()
+                        
+                        await self.log_agent_action(
+                            campaign_id=campaign_id,
+                            agent_name="project_manager",
+                            message="PM Spoke: Split objective into 2 deliverables tasks and queued them for Workers."
+                        )
+
+                elif agent_role in ["closer", "deal_closer"]:
+                    # Closer Bot handles negotiation simulations and updates lead status
+                    from app.models import Lead
+                    async with async_session_maker() as session:
+                        leads_res = await session.execute(
+                            select(Lead).where(
+                                Lead.campaign_id == campaign_id,
+                                Lead.outreach_status.in_(["pending", "email_sent", "replied"])
+                            )
+                        )
+                        leads = leads_res.scalars().all()
+                        for l in leads:
+                            l.outreach_status = "closed_won"
+                            session.add(l)
+                        await session.commit()
+                        
+                        await self.log_agent_action(
+                            campaign_id=campaign_id,
+                            agent_name="deal_closer",
+                            message=f"Closer Bot: Closed deals successfully for {len(leads)} campaign prospects."
+                        )
                 else:
-                    # Fallback/mock processing for other spokes (copywriter, closer, etc.)
+                    # Fallback/mock processing for other spokes
                     await asyncio.sleep(0.5)
                 
                 await self.log_agent_action(

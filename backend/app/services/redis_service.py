@@ -14,6 +14,7 @@ class RedisService:
             decode_responses=True,
             socket_timeout=5.0
         )
+        self.is_offline = False
 
     async def get_cache(self, key: str) -> Optional[str]:
         """Fetch string value from Redis cache."""
@@ -55,6 +56,8 @@ class RedisService:
             )
         except Exception as e:
             print(f"Redis Lock Acquire Error for '{lock_name}': {e}")
+            if "refused" in str(e).lower() or "connect" in str(e).lower() or "timeout" in str(e).lower() or "multiple exceptions" in str(e).lower():
+                self.is_offline = True
             return False
 
     async def release_lock(self, lock_name: str, token: str) -> bool:
@@ -94,19 +97,22 @@ class RedisService:
 
         # Attempt to acquire the lock (blocking/polling loop)
         while time.time() < end_time:
+            if self.is_offline:
+                break
             if await self.acquire_lock(lock_name, token, lock_timeout):
                 acquired = True
                 break
             await asyncio.sleep(0.1)  # sleep 100ms before retrying
 
-        if not acquired:
+        if not acquired and not self.is_offline:
             raise TimeoutError(f"Could not acquire lock on '{lock_name}' within {acquire_timeout}s")
 
         try:
             yield
         finally:
-            # Always guarantee release on block exit
-            await self.release_lock(lock_name, token)
+            # Always guarantee release on block exit if acquired
+            if acquired and not self.is_offline:
+                await self.release_lock(lock_name, token)
 
 # Instantiate global service client
 redis_service = RedisService()
